@@ -1,0 +1,1674 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Glow RRT</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Montserrat:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --gold: #C9A84C;
+      --gold-light: #E8C96A;
+      --gold-pale: #F5E6B8;
+      --gold-dark: #8B6914;
+      --black: #0A0A0A;
+      --off-black: #111111;
+      --charcoal: #1A1A1A;
+      --white: #FAFAFA;
+      --off-white: #F0EBE0;
+      --gray: #888;
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      background: var(--black);
+      color: var(--white);
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 300;
+    }
+ 
+    /* ─── NOISE OVERLAY ─── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 9999; opacity: 0.3;
+    }
+ 
+    /* ─── NAV ─── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 500;
+      padding: 20px 52px;
+      display: flex; justify-content: space-between; align-items: center;
+      background: rgba(10,10,10,0.92);
+      border-bottom: 1px solid rgba(201,168,76,0.12);
+      backdrop-filter: blur(8px);
+    }
+    .nav-logo {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.45rem; font-weight: 600;
+      letter-spacing: 0.25em; color: var(--gold);
+      text-transform: uppercase; cursor: pointer;
+    }
+    .nav-links { display: flex; gap: 0; list-style: none; }
+    .nav-links li { position: relative; }
+    .nav-links button {
+      background: none; border: none; cursor: pointer;
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.62rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--off-white); opacity: 0.55;
+      padding: 8px 16px;
+      transition: opacity 0.3s, color 0.3s;
+    }
+    .nav-links button:hover { opacity: 1; color: var(--gold); }
+    .nav-links button.active { opacity: 1; color: var(--gold); }
+    .nav-indicator {
+      position: absolute; bottom: 0; left: 16px; right: 16px;
+      height: 1px; background: var(--gold);
+      transform: scaleX(0); transition: transform 0.3s;
+    }
+    .nav-links li.active .nav-indicator { transform: scaleX(1); }
+ 
+    /* ─── SLIDE NAV ARROWS ─── */
+    .slide-arrow {
+      position: fixed; top: 50%; z-index: 400;
+      transform: translateY(-50%);
+      background: rgba(10,10,10,0.7);
+      border: 1px solid rgba(201,168,76,0.2);
+      color: var(--gold); font-size: 1rem;
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: all 0.3s;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    .slide-arrow:hover { background: rgba(201,168,76,0.15); border-color: var(--gold); }
+    .slide-arrow.prev { left: 14px; }
+    .slide-arrow.next { right: 14px; }
+    .slide-arrow:disabled { opacity: 0.15; cursor: default; pointer-events: none; }
+ 
+    /* ─── AUTOPLAY TOGGLE ─── */
+    .autoplay-toggle {
+      position: fixed; bottom: 28px; left: 28px; z-index: 400;
+      background: rgba(10,10,10,0.7);
+      border: 1px solid rgba(201,168,76,0.25);
+      color: var(--gold-pale);
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.6rem; letter-spacing: 0.15em; text-transform: uppercase;
+      padding: 9px 16px;
+      display: flex; align-items: center; gap: 8px;
+      cursor: pointer; transition: all 0.3s;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    .autoplay-toggle:hover { background: rgba(201,168,76,0.15); border-color: var(--gold); }
+    .autoplay-toggle .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--gold); flex: none;
+    }
+    .autoplay-toggle.paused .dot { background: var(--gray); }
+    @media (max-width: 700px) {
+      .autoplay-toggle { left: 16px; bottom: 16px; padding: 8px 12px; font-size: 0.55rem; }
+    }
+ 
+    /* ─── PAGE COUNTER ─── */
+    .page-counter {
+      position: fixed; bottom: 28px; right: 28px; z-index: 400;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .page-dot {
+      width: 6px; height: 6px;
+      border: 1px solid rgba(201,168,76,0.4);
+      border-radius: 50%; cursor: pointer;
+      transition: all 0.3s;
+    }
+    .page-dot.active {
+      background: var(--gold);
+      border-color: var(--gold);
+      transform: scale(1.3);
+    }
+ 
+    /* ─── SLIDER WRAPPER ─── */
+    .slider-viewport {
+      position: fixed; top: 61px; left: 0; right: 0; bottom: 0;
+      overflow: hidden;
+    }
+    .slider-track {
+      display: flex; height: 100%;
+      transition: transform 0.7s cubic-bezier(0.77,0,0.175,1);
+      will-change: transform;
+    }
+    .slide {
+      flex: 0 0 100vw; width: 100vw; height: 100%;
+      overflow-y: auto; overflow-x: hidden;
+      scroll-behavior: smooth;
+    }
+    .slide::-webkit-scrollbar { width: 4px; }
+    .slide::-webkit-scrollbar-track { background: transparent; }
+    .slide::-webkit-scrollbar-thumb { background: rgba(201,168,76,0.25); }
+ 
+    /* ════════════════════════════════════════════
+       PAGE 1 — HOME
+    ════════════════════════════════════════════ */
+    .p1-hero {
+      min-height: calc(100vh - 61px);
+      display: grid; grid-template-columns: 1fr 1fr;
+      align-items: center; position: relative; overflow: hidden;
+    }
+    .p1-hero-bg {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 60% 70% at 75% 50%, rgba(201,168,76,0.12) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 50% at 20% 80%, rgba(201,168,76,0.06) 0%, transparent 50%);
+    }
+    .p1-hero-line {
+      position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
+      background: linear-gradient(to bottom, transparent, rgba(201,168,76,0.3) 30%, rgba(201,168,76,0.3) 70%, transparent);
+    }
+    .p1-hero-left {
+      padding: 80px 60px 80px 80px; position: relative; z-index: 2;
+    }
+    .eyebrow {
+      font-size: 0.6rem; letter-spacing: 0.35em; text-transform: uppercase;
+      color: var(--gold); margin-bottom: 22px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .eyebrow::before { content: ''; display: block; width: 28px; height: 1px; background: var(--gold); }
+    .eyebrow-center { justify-content: center; }
+    .eyebrow-center::before, .eyebrow-center::after { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .p1-h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(3.5rem, 6vw, 6.5rem);
+      font-weight: 300; line-height: 0.95; margin-bottom: 20px;
+    }
+    .p1-h1 em { font-style: italic; color: var(--gold); }
+    .hero-theme {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1rem; font-style: italic;
+      color: var(--gold-pale); opacity: 0.85;
+      line-height: 1.6; margin-bottom: 28px;
+    }
+    .hero-subtitle {
+      font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--off-white); opacity: 0.55;
+      margin-bottom: 40px; line-height: 1.8;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 14px;
+      background: transparent; border: 1px solid var(--gold);
+      color: var(--gold); font-family: 'Montserrat', sans-serif;
+      font-size: 0.62rem; font-weight: 500;
+      letter-spacing: 0.3em; text-transform: uppercase;
+      padding: 16px 36px; cursor: pointer; text-decoration: none;
+      transition: all 0.4s cubic-bezier(0.25,0.46,0.45,0.94);
+      position: relative; overflow: hidden;
+    }
+    .btn-primary::before {
+      content: ''; position: absolute; inset: 0;
+      background: var(--gold);
+      transform: translateX(-101%);
+      transition: transform 0.4s cubic-bezier(0.25,0.46,0.45,0.94); z-index: 0;
+    }
+    .btn-primary:hover::before { transform: translateX(0); }
+    .btn-primary:hover { color: var(--black); }
+    .btn-primary span { position: relative; z-index: 1; }
+    .p1-hero-right {
+      position: relative; height: calc(100vh - 61px); overflow: hidden;
+    }
+    .hero-img { width: 100%; height: 100%; object-fit: cover; filter: grayscale(30%) contrast(1.05); opacity: 0.85; }
+    .hero-img-overlay {
+      position: absolute; inset: 0;
+      background: linear-gradient(to right, var(--black) 0%, transparent 25%), linear-gradient(to top, var(--black) 0%, transparent 30%);
+    }
+    .hero-counter {
+      position: absolute; bottom: 40px; right: 40px;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 3.5rem; font-weight: 300; color: var(--gold); opacity: 0.2; line-height: 1;
+    }
+ 
+    /* Gold divider */
+    .gold-div {
+      display: flex; align-items: center; gap: 16px; padding: 48px 80px;
+    }
+    .gold-div::before, .gold-div::after {
+      content: ''; flex: 1; height: 1px;
+      background: linear-gradient(to right, transparent, var(--gold), transparent);
+    }
+    .gold-div span { color: var(--gold); font-size: 0.9rem; }
+ 
+    /* Purpose section */
+    .section-purpose {
+      padding: 0 80px 80px;
+      display: grid; grid-template-columns: 1fr 2fr; gap: 80px; align-items: start;
+    }
+    .section-label {
+      font-size: 0.6rem; letter-spacing: 0.35em; text-transform: uppercase;
+      color: var(--gold); display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+    }
+    .section-label::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .purpose-content h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.8rem, 3vw, 2.8rem); font-weight: 300;
+      line-height: 1.2; margin-bottom: 28px;
+    }
+    .purpose-content h2 em { font-style: italic; color: var(--gold); }
+    .purpose-content p {
+      font-size: 0.84rem; line-height: 1.9; color: rgba(250,250,250,0.6); margin-bottom: 18px;
+    }
+ 
+    /* Stats */
+    .stats-row {
+      display: grid; grid-template-columns: repeat(3,1fr);
+      border-top: 1px solid rgba(201,168,76,0.12);
+      border-bottom: 1px solid rgba(201,168,76,0.12);
+      margin: 0 80px; margin-bottom: 80px;
+    }
+    .stat-item {
+      padding: 36px 40px; border-right: 1px solid rgba(201,168,76,0.12);
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 3rem; font-weight: 300; color: var(--gold);
+      display: block; margin-bottom: 8px;
+    }
+    .stat-label { font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(250,250,250,0.4); }
+ 
+    /* Standards */
+    .section-standards { background: var(--charcoal); padding: 80px; }
+    .std-header {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 60px;
+      align-items: start; margin-bottom: 60px;
+    }
+    .std-header h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2rem, 3.5vw, 3rem); font-weight: 300; line-height: 1.15;
+    }
+    .std-header h2 em { font-style: italic; color: var(--gold); }
+    .std-header p { font-size: 0.84rem; line-height: 1.9; color: rgba(250,250,250,0.55); padding-top: 8px; }
+    .standards-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; }
+    .standard-card {
+      background: rgba(255,255,255,0.02); border: 1px solid rgba(201,168,76,0.1);
+      padding: 40px 28px; position: relative; overflow: hidden;
+      transition: background 0.4s, border-color 0.4s;
+    }
+    .standard-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(to right, var(--gold), var(--gold-light));
+      transform: scaleX(0); transition: transform 0.4s;
+    }
+    .standard-card:hover { background: rgba(201,168,76,0.05); border-color: rgba(201,168,76,0.3); }
+    .standard-card:hover::before { transform: scaleX(1); }
+    .card-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 2.5rem; font-weight: 300; color: var(--gold); opacity: 0.25;
+      line-height: 1; margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 0.65rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--off-white); margin-bottom: 14px;
+    }
+    .card-text { font-size: 0.8rem; line-height: 1.8; color: rgba(250,250,250,0.5); }
+ 
+    /* Acceptance */
+    .section-acceptance {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 80px;
+      align-items: center; padding: 80px;
+    }
+    .acceptance-img-wrap { position: relative; }
+    .acceptance-img {
+      width: 100%; aspect-ratio: 4/5; object-fit: cover; filter: grayscale(20%); display: block;
+    }
+    .acceptance-img-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(10,10,10,0.4) 0%, transparent 50%); }
+    .acceptance-badge {
+      position: absolute; bottom: -20px; right: -20px;
+      width: 120px; height: 120px; border-radius: 50%;
+      background: var(--charcoal); border: 2px solid var(--gold);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 12px;
+    }
+    .badge-text { font-size: 0.65rem; letter-spacing: 0.1em; color: var(--gold); font-weight: 500; line-height: 1.3; }
+    .badge-sub { font-size: 0.52rem; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(250,250,250,0.4); margin-top: 4px; }
+    .acceptance-content h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2rem, 3.5vw, 3rem); font-weight: 300;
+      line-height: 1.2; margin-bottom: 28px;
+    }
+    .acceptance-content h2 em { font-style: italic; color: var(--gold); }
+    .acceptance-quote {
+      border-left: 2px solid var(--gold); padding: 20px 24px;
+      background: rgba(201,168,76,0.04); margin-bottom: 24px;
+    }
+    .acceptance-quote p {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.1rem; font-style: italic; font-weight: 300;
+      line-height: 1.6; color: var(--off-white);
+    }
+    .acceptance-content p { font-size: 0.83rem; line-height: 1.9; color: rgba(250,250,250,0.6); margin-bottom: 28px; }
+ 
+    /* ════════════════════════════════════════════
+       PAGE 2 — CUIDADOS
+    ════════════════════════════════════════════ */
+    .p2-hero {
+      min-height: 55vh; display: flex; flex-direction: column; justify-content: flex-end;
+      padding: 0 80px 70px; position: relative; overflow: hidden;
+    }
+    .p2-hero-bg {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 100%, rgba(201,168,76,0.1) 0%, transparent 60%), linear-gradient(to bottom, var(--black) 0%, var(--charcoal) 100%);
+    }
+    .p2-hero-img {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; opacity: 0.18; filter: grayscale(40%);
+    }
+    .p2-hero-overlay { position: absolute; inset: 0; background: linear-gradient(to top, var(--black) 30%, transparent 100%); }
+    .p2-hero-content { position: relative; z-index: 2; max-width: 700px; }
+    .p2-hero-content h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2.5rem, 5vw, 5rem); font-weight: 300; line-height: 1.05; margin-bottom: 20px;
+    }
+    .p2-hero-content h1 em { font-style: italic; color: var(--gold); }
+    .p2-hero-content p { font-size: 0.85rem; line-height: 1.9; color: rgba(250,250,250,0.6); max-width: 560px; }
+ 
+    /* Importance */
+    .section-importance {
+      padding: 0 80px 80px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 80px; align-items: center;
+    }
+    .importance-text h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.8rem, 3vw, 2.8rem); font-weight: 300; line-height: 1.2; margin-bottom: 24px;
+    }
+    .importance-text h2 em { font-style: italic; color: var(--gold); }
+    .importance-text p { font-size: 0.84rem; line-height: 1.9; color: rgba(250,250,250,0.62); margin-bottom: 16px; }
+    .importance-img-wrap { position: relative; }
+    .importance-img { width: 100%; aspect-ratio: 4/5; object-fit: cover; filter: grayscale(20%); display: block; }
+    .img-frame {
+      position: absolute; inset: -10px -10px 10px 10px;
+      border: 1px solid rgba(201,168,76,0.25); pointer-events: none; z-index: -1;
+    }
+ 
+    /* Skin types */
+    .section-types { background: var(--charcoal); padding: 80px; }
+    .section-header { text-align: center; margin-bottom: 56px; }
+    .section-header-label {
+      font-size: 0.6rem; letter-spacing: 0.35em; text-transform: uppercase;
+      color: var(--gold); display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 16px;
+    }
+    .section-header-label::before, .section-header-label::after { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .section-header h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2rem, 3.5vw, 3rem); font-weight: 300;
+    }
+    .section-header h2 em { font-style: italic; color: var(--gold); }
+    .types-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 2px; }
+    .type-card {
+      background: rgba(255,255,255,0.02); border: 1px solid rgba(201,168,76,0.1);
+      padding: 40px 24px; text-align: center;
+      transition: background 0.4s, border-color 0.4s, transform 0.4s;
+      position: relative; overflow: hidden; cursor: default;
+    }
+    .type-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(to right, var(--gold), var(--gold-light));
+      transform: scaleX(0); transition: transform 0.4s;
+    }
+    .type-card:hover { background: rgba(201,168,76,0.06); border-color: rgba(201,168,76,0.35); transform: translateY(-4px); }
+    .type-card:hover::before { transform: scaleX(1); }
+    .type-icon { font-size: 2rem; margin-bottom: 16px; display: block; }
+    .type-name { font-family: 'Cormorant Garamond', serif; font-size: 1.4rem; font-weight: 400; color: var(--gold); margin-bottom: 12px; }
+    .type-desc { font-size: 0.75rem; line-height: 1.8; color: rgba(250,250,250,0.55); }
+    .type-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 16px; }
+    .tag { font-size: 0.52rem; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid rgba(201,168,76,0.3); color: var(--gold); padding: 3px 8px; }
+ 
+    /* Tips */
+    .section-tips { padding: 80px; }
+    .tips-intro { max-width: 560px; margin: 0 auto 56px; text-align: center; }
+    .tips-intro p { font-size: 0.84rem; line-height: 1.9; color: rgba(250,250,250,0.6); }
+    .tips-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; }
+    .tip-card { border: 1px solid rgba(201,168,76,0.1); background: rgba(255,255,255,0.015); overflow: hidden; }
+    .tip-img-wrap { position: relative; overflow: hidden; }
+    .tip-img { width: 100%; height: 200px; object-fit: cover; filter: grayscale(25%); display: block; transition: transform 0.5s; }
+    .tip-card:hover .tip-img { transform: scale(1.04); }
+    .tip-img-label {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      padding: 20px 24px;
+      background: linear-gradient(to top, rgba(10,10,10,0.9) 0%, transparent 100%);
+    }
+    .tip-step { font-size: 0.54rem; letter-spacing: 0.25em; text-transform: uppercase; color: var(--gold); margin-bottom: 4px; }
+    .tip-img-label h3 { font-family: 'Cormorant Garamond', serif; font-size: 1.4rem; font-weight: 300; }
+    .tip-body { padding: 24px; }
+    .tip-body p { font-size: 0.8rem; line-height: 1.8; color: rgba(250,250,250,0.6); margin-bottom: 16px; }
+    .tip-list { list-style: none; }
+    .tip-list li {
+      font-size: 0.75rem; line-height: 1.7; color: rgba(250,250,250,0.5);
+      padding: 5px 0 5px 16px; position: relative;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .tip-list li::before { content: '—'; position: absolute; left: 0; color: var(--gold); font-size: 0.6rem; }
+    .tip-list li:last-child { border-bottom: none; }
+ 
+    /* Banner */
+    .banner-tip {
+      margin: 0 80px 80px;
+      border: 1px solid rgba(201,168,76,0.2);
+      background: rgba(201,168,76,0.04);
+      padding: 36px 48px;
+      display: flex; align-items: flex-start; gap: 28px;
+    }
+    .banner-tip-icon { font-size: 2rem; flex-shrink: 0; margin-top: 2px; }
+    .banner-tip h3 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.3rem; font-weight: 300; margin-bottom: 8px; color: var(--gold-pale);
+    }
+    .banner-tip p { font-size: 0.82rem; line-height: 1.8; color: rgba(250,250,250,0.55); }
+ 
+    /* ════════════════════════════════════════════
+       PAGE 3 — AUTOESTIMA
+    ════════════════════════════════════════════ */
+    .p3-hero {
+      height: calc(100vh - 61px);
+      display: grid; grid-template-columns: 1fr 1fr; overflow: hidden;
+    }
+    .p3-hero-left {
+      display: flex; flex-direction: column; justify-content: flex-end;
+      padding: 0 70px 80px; background: var(--black); position: relative; z-index: 2;
+    }
+    .p3-hero-left::after {
+      content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 1px;
+      background: linear-gradient(to bottom, transparent, rgba(201,168,76,0.35) 30%, rgba(201,168,76,0.35) 70%, transparent);
+    }
+    .p3-hero-left h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 300; line-height: 1.05; margin-bottom: 24px;
+    }
+    .p3-hero-left h1 em { font-style: italic; color: var(--gold); display: block; }
+    .p3-hero-intro { font-size: 0.82rem; line-height: 1.9; color: rgba(250,250,250,0.58); max-width: 440px; }
+    .p3-hero-right { position: relative; overflow: hidden; }
+    .p3-hero-right img {
+      width: 100%; height: 100%; object-fit: cover;
+      filter: grayscale(30%) contrast(1.05); opacity: 0.75; display: block;
+    }
+    .p3-hero-overlay {
+      position: absolute; inset: 0;
+      background: linear-gradient(to right, rgba(10,10,10,0.5) 0%, transparent 40%), linear-gradient(to top, rgba(10,10,10,0.6) 0%, transparent 40%);
+    }
+ 
+    /* Essay */
+    .section-essay {
+      padding: 0 80px 80px;
+      display: grid; grid-template-columns: 1fr 2fr; gap: 80px;
+    }
+    .essay-sidebar { padding-top: 8px; }
+    .sidebar-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 5rem; font-weight: 300; color: var(--gold); opacity: 0.15; line-height: 1; margin-top: 12px;
+    }
+    .essay-body h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.8rem, 3vw, 2.8rem); font-weight: 300; line-height: 1.2; margin-bottom: 28px;
+    }
+    .essay-body h2 em { font-style: italic; color: var(--gold); }
+    .essay-body p { font-size: 0.85rem; line-height: 2; color: rgba(250,250,250,0.62); margin-bottom: 20px; }
+    .essay-body p strong { color: var(--gold-pale); font-weight: 400; }
+    .pull-quote {
+      margin: 40px 0; padding: 32px 40px;
+      border-left: 3px solid var(--gold); background: rgba(201,168,76,0.04);
+      position: relative;
+    }
+    .pull-quote::before {
+      content: '\201C'; font-family: 'Cormorant Garamond', serif;
+      font-size: 5rem; color: var(--gold); opacity: 0.2;
+      position: absolute; top: -8px; left: 12px; line-height: 1; pointer-events: none;
+    }
+    .pull-quote p {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.35rem !important; font-style: italic; font-weight: 300;
+      line-height: 1.6 !important; color: var(--off-white) !important; margin: 0 !important;
+    }
+ 
+    /* Social */
+    .section-social { background: var(--charcoal); padding: 80px; }
+    .social-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; align-items: center; }
+    .social-img-col { position: relative; }
+    .social-img { width: 100%; aspect-ratio: 1/1; object-fit: cover; filter: grayscale(20%); display: block; }
+    .social-img-deco { position: absolute; bottom: -16px; right: -16px; width: 80px; height: 80px; border: 2px solid rgba(201,168,76,0.35); }
+    .social-img-deco2 { position: absolute; top: -12px; left: -12px; width: 50px; height: 50px; background: rgba(201,168,76,0.08); }
+    .social-text-col h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.8rem, 3vw, 2.8rem); font-weight: 300; line-height: 1.2; margin-bottom: 24px;
+    }
+    .social-text-col h2 em { font-style: italic; color: var(--gold); }
+    .social-text-col p { font-size: 0.84rem; line-height: 2; color: rgba(250,250,250,0.6); margin-bottom: 16px; }
+    .stat-pills { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; }
+    .pill {
+      font-size: 0.75rem; line-height: 1.6; color: rgba(250,250,250,0.55);
+      border: 1px solid rgba(201,168,76,0.15); padding: 10px 16px;
+    }
+    .pill strong { color: var(--gold); font-weight: 500; }
+ 
+    /* Diversity */
+    .section-diversity { padding: 80px; }
+    .diversity-header { text-align: center; margin-bottom: 48px; }
+    .diversity-header h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2rem, 3.5vw, 3rem); font-weight: 300;
+    }
+    .diversity-header h2 em { font-style: italic; color: var(--gold); }
+    .diversity-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; }
+    .div-img-wrap { position: relative; overflow: hidden; }
+    .div-img { width: 100%; aspect-ratio: 3/4; object-fit: cover; filter: grayscale(15%); display: block; transition: transform 0.5s; }
+    .div-img-wrap:hover .div-img { transform: scale(1.04); filter: grayscale(0); }
+    .div-label {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      padding: 16px 20px;
+      background: linear-gradient(to top, rgba(10,10,10,0.85) 0%, transparent 100%);
+      font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(250,250,250,0.7);
+    }
+ 
+    /* Manifesto */
+    .section-manifesto {
+      background: var(--charcoal); padding: 80px;
+      text-align: center; position: relative; overflow: hidden;
+    }
+    .manifesto-deco {
+      font-size: 8rem; color: var(--gold); opacity: 0.06;
+      position: absolute; top: -20px; left: 50%; transform: translateX(-50%);
+      line-height: 1; pointer-events: none; font-family: serif;
+    }
+    .manifesto-inner { max-width: 700px; margin: 0 auto; position: relative; z-index: 1; }
+    .manifesto-inner h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2rem, 3.5vw, 3rem); font-weight: 300; line-height: 1.2; margin-bottom: 36px;
+    }
+    .manifesto-inner h2 em { font-style: italic; color: var(--gold); }
+    .manifesto-inner p {
+      font-size: 0.85rem; line-height: 2; color: rgba(250,250,250,0.62); margin-bottom: 20px; text-align: left;
+    }
+    .manifesto-inner p strong { color: var(--gold-pale); font-weight: 400; }
+    .manifesto-words {
+      display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+      margin: 32px 0;
+    }
+    .m-word {
+      font-size: 0.58rem; letter-spacing: 0.2em; text-transform: uppercase;
+      border: 1px solid rgba(201,168,76,0.25); color: var(--gold); padding: 6px 14px;
+    }
+    .manifesto-closing {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.2rem; font-style: italic; font-weight: 300;
+      color: var(--off-white); line-height: 1.6;
+      text-align: center !important; margin-top: 40px; opacity: 0.75;
+    }
+ 
+    /* ════════════════════════════════════════════
+       PAGE 4 — QUESTIONÁRIO
+    ════════════════════════════════════════════ */
+    .p4-main {
+      padding: 60px 24px 80px; max-width: 720px; margin: 0 auto;
+    }
+    .quiz-header { text-align: center; margin-bottom: 48px; }
+    .quiz-header h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2rem, 4vw, 3rem); font-weight: 300; line-height: 1.15; margin-bottom: 18px;
+    }
+    .quiz-header h1 em { font-style: italic; color: var(--gold); }
+    .quiz-header p { font-size: 0.82rem; line-height: 1.85; color: rgba(250,250,250,0.55); max-width: 480px; margin: 0 auto; }
+    .progress-bar-wrap { margin-bottom: 40px; }
+    .progress-label {
+      display: flex; justify-content: space-between;
+      font-size: 0.58rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(250,250,250,0.35); margin-bottom: 8px;
+    }
+    .progress-label span:last-child { color: var(--gold); }
+    .progress-track { height: 2px; background: rgba(255,255,255,0.06); }
+    .progress-fill {
+      height: 100%; background: linear-gradient(to right, var(--gold), var(--gold-light));
+      transition: width 0.5s cubic-bezier(0.4,0,0.2,1); width: 0%;
+    }
+    .section-title {
+      font-size: 0.58rem; letter-spacing: 0.3em; text-transform: uppercase;
+      color: var(--gold); margin-bottom: 20px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .section-title::before { content: ''; display: block; width: 16px; height: 1px; background: var(--gold); }
+    .question {
+      border: 1px solid rgba(201,168,76,0.12);
+      background: rgba(255,255,255,0.02);
+      padding: 24px 28px; margin-bottom: 10px;
+      transition: border-color 0.3s, background 0.3s;
+    }
+    .question.answered { border-color: rgba(201,168,76,0.3); background: rgba(201,168,76,0.04); }
+    .question-text {
+      font-size: 0.86rem; line-height: 1.6; color: var(--off-white);
+      margin-bottom: 18px; display: flex; align-items: flex-start; gap: 12px;
+    }
+    .q-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.1rem; color: var(--gold); opacity: 0.5; flex-shrink: 0; line-height: 1.3;
+    }
+    .options { display: flex; gap: 10px; }
+    .opt-btn {
+      flex: 1; padding: 11px;
+      background: transparent; border: 1px solid rgba(201,168,76,0.2);
+      color: rgba(250,250,250,0.6);
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.7rem; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase;
+      cursor: pointer; transition: all 0.25s;
+    }
+    .opt-btn:hover { border-color: rgba(201,168,76,0.5); color: var(--gold); background: rgba(201,168,76,0.05); }
+    .opt-btn.selected-yes { background: var(--gold); border-color: var(--gold); color: var(--black); font-weight: 600; }
+    .opt-btn.selected-no { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.25); color: var(--white); }
+    .section-divider { height: 1px; background: linear-gradient(to right, transparent, rgba(201,168,76,0.2), transparent); margin: 28px 0; }
+    .submit-wrap { text-align: center; margin-top: 32px; }
+    .btn-submit {
+      display: inline-flex; align-items: center; gap: 14px;
+      background: transparent; border: 1px solid var(--gold);
+      color: var(--gold); font-family: 'Montserrat', sans-serif;
+      font-size: 0.62rem; font-weight: 500; letter-spacing: 0.3em; text-transform: uppercase;
+      padding: 16px 48px; cursor: pointer;
+      transition: all 0.4s; position: relative; overflow: hidden;
+    }
+    .btn-submit::before {
+      content: ''; position: absolute; inset: 0; background: var(--gold);
+      transform: translateX(-101%);
+      transition: transform 0.4s cubic-bezier(0.25,0.46,0.45,0.94);
+    }
+    .btn-submit:hover::before { transform: translateX(0); }
+    .btn-submit:hover { color: var(--black); }
+    .btn-submit span { position: relative; z-index: 1; }
+    .btn-submit:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+    .submit-note { font-size: 0.62rem; letter-spacing: 0.1em; color: rgba(250,250,250,0.3); margin-top: 12px; }
+    #p4-results { display: none; }
+    .results-header { text-align: center; margin-bottom: 44px; }
+    .results-header h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.8rem, 3.5vw, 2.8rem); font-weight: 300; margin-bottom: 14px;
+    }
+    .results-header h2 em { font-style: italic; color: var(--gold); }
+    .results-header p { font-size: 0.8rem; color: rgba(250,250,250,0.5); line-height: 1.8; }
+    .result-cards { display: flex; flex-direction: column; gap: 12px; }
+    .result-card {
+      border: 1px solid rgba(201,168,76,0.18); background: rgba(201,168,76,0.03);
+      padding: 24px 28px; display: flex; gap: 18px; align-items: flex-start;
+      animation: fadeUp 0.5s ease both;
+    }
+    .result-icon { font-size: 1.5rem; flex-shrink: 0; }
+    .result-content h3 {
+      font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--gold); margin-bottom: 8px;
+    }
+    .result-content p { font-size: 0.8rem; line-height: 1.8; color: rgba(250,250,250,0.62); }
+    .result-all-good {
+      text-align: center; padding: 40px 28px;
+      border: 1px solid rgba(201,168,76,0.2); background: rgba(201,168,76,0.04);
+    }
+    .result-all-good p {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.25rem; font-style: italic; color: var(--off-white); line-height: 1.6;
+    }
+    .back-btn {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: transparent; border: 1px solid rgba(201,168,76,0.25);
+      color: rgba(250,250,250,0.5); font-family: 'Montserrat', sans-serif;
+      font-size: 0.58rem; letter-spacing: 0.2em; text-transform: uppercase;
+      padding: 12px 24px; cursor: pointer; margin-top: 28px; transition: all 0.3s;
+    }
+    .back-btn:hover { border-color: var(--gold); color: var(--gold); }
+ 
+    /* ════════════════════════════════════════════
+       PAGE 5 — AVALIAÇÃO
+    ════════════════════════════════════════════ */
+    .p5-main {
+      display: flex; align-items: center; justify-content: center;
+      min-height: calc(100vh - 61px); padding: 40px 24px;
+    }
+    .p5-card {
+      width: 100%; max-width: 580px;
+      border: 1px solid rgba(201,168,76,0.18);
+      background: rgba(255,255,255,0.02);
+      padding: 56px 52px; text-align: center;
+      position: relative; overflow: hidden;
+    }
+    .p5-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(to right, transparent, var(--gold), transparent);
+    }
+    .p5-card h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 300;
+      line-height: 1.2; margin-bottom: 12px;
+    }
+    .p5-card h1 em { font-style: italic; color: var(--gold); }
+    .p5-subtitle { font-size: 0.78rem; line-height: 1.8; color: rgba(250,250,250,0.5); margin-bottom: 40px; }
+    .stars-label { font-size: 0.58rem; letter-spacing: 0.25em; text-transform: uppercase; color: rgba(250,250,250,0.35); margin-bottom: 20px; }
+    .stars-section { margin-bottom: 40px; }
+    .stars { display: flex; justify-content: center; gap: 8px; }
+    .star {
+      font-size: 2.6rem; cursor: pointer; color: rgba(255,255,255,0.12);
+      transition: color 0.2s, transform 0.2s; line-height: 1; user-select: none;
+    }
+    .star:hover, .star.hovered, .star.selected { color: var(--gold); }
+    .star.selected { transform: scale(1.15); }
+    .star:active { transform: scale(0.92); }
+    .rating-desc {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1rem; font-style: italic; color: var(--gold);
+      opacity: 0; margin-top: 14px; min-height: 24px; transition: opacity 0.3s;
+    }
+    .rating-desc.visible { opacity: 1; }
+    .comment-section { margin-bottom: 32px; }
+    .comment-label { font-size: 0.58rem; letter-spacing: 0.25em; text-transform: uppercase; color: rgba(250,250,250,0.35); margin-bottom: 12px; text-align: left; }
+    .p5-card textarea {
+      width: 100%; background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(201,168,76,0.15);
+      color: var(--white); font-family: 'Montserrat', sans-serif;
+      font-size: 0.8rem; font-weight: 300; line-height: 1.7;
+      padding: 14px 18px; resize: none; outline: none;
+      transition: border-color 0.3s; height: 90px;
+    }
+    .p5-card textarea::placeholder { color: rgba(250,250,250,0.2); }
+    .p5-card textarea:focus { border-color: rgba(201,168,76,0.4); }
+    .btn-p5 {
+      width: 100%; padding: 16px;
+      background: transparent; border: 1px solid var(--gold);
+      color: var(--gold); font-family: 'Montserrat', sans-serif;
+      font-size: 0.62rem; font-weight: 500; letter-spacing: 0.3em; text-transform: uppercase;
+      cursor: pointer; transition: all 0.4s; position: relative; overflow: hidden;
+    }
+    .btn-p5::before {
+      content: ''; position: absolute; inset: 0; background: var(--gold);
+      transform: translateX(-101%);
+      transition: transform 0.4s cubic-bezier(0.25,0.46,0.45,0.94);
+    }
+    .btn-p5:hover::before { transform: translateX(0); }
+    .btn-p5:hover { color: var(--black); }
+    .btn-p5 span { position: relative; z-index: 1; }
+    .btn-p5:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+ 
+    /* Thank you */
+    #p5-thankyou { display: none; text-align: center; }
+    .ty-icon { font-size: 3rem; margin-bottom: 24px; display: block; animation: pulse 2s ease infinite; }
+    @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    .ty-stars { display: flex; justify-content: center; gap: 6px; font-size: 1.4rem; margin-bottom: 24px; }
+    #p5-thankyou h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.6rem, 3.5vw, 2.4rem); font-weight: 300; line-height: 1.25; margin-bottom: 24px;
+    }
+    #p5-thankyou h2 em { font-style: italic; color: var(--gold); }
+    .ty-message {
+      border-left: 2px solid var(--gold); padding: 20px 24px; text-align: left;
+      background: rgba(201,168,76,0.04); margin-bottom: 28px;
+    }
+    .ty-message p {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.05rem; font-style: italic; font-weight: 300; line-height: 1.7; color: var(--off-white);
+    }
+    .ty-message p + p { margin-top: 10px; }
+    .ty-tagline { font-size: 0.78rem; line-height: 1.8; color: rgba(250,250,250,0.45); }
+    .ty-nav { display: flex; gap: 8px; justify-content: center; margin-top: 28px; flex-wrap: wrap; }
+    .ty-nav button {
+      font-size: 0.58rem; letter-spacing: 0.18em; text-transform: uppercase;
+      color: rgba(250,250,250,0.4); background: none;
+      border: 1px solid rgba(201,168,76,0.15);
+      padding: 9px 18px; cursor: pointer; transition: all 0.3s; font-family: 'Montserrat', sans-serif;
+    }
+    .ty-nav button:hover { color: var(--gold); border-color: var(--gold); }
+ 
+    /* ─── SHARED FOOTER (inside each slide) ─── */
+    .slide-footer {
+      padding: 32px 80px;
+      display: flex; justify-content: space-between; align-items: center;
+      border-top: 1px solid rgba(201,168,76,0.1);
+    }
+    .footer-logo {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.2rem; font-weight: 600;
+      letter-spacing: 0.25em; color: var(--gold); text-transform: uppercase;
+    }
+    .footer-copy { font-size: 0.58rem; letter-spacing: 0.12em; color: rgba(250,250,250,0.28); }
+ 
+    /* ─── ANIMATIONS ─── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #p5-thankyou > * { animation: fadeUp 0.6s ease both; }
+    #p5-thankyou .ty-icon { animation-delay: 0s; }
+    #p5-thankyou .ty-stars { animation-delay: 0.08s; }
+    #p5-thankyou h2 { animation-delay: 0.16s; }
+    #p5-thankyou .ty-message { animation-delay: 0.24s; }
+    #p5-thankyou .ty-tagline { animation-delay: 0.32s; }
+    #p5-thankyou .ty-nav { animation-delay: 0.4s; }
+ 
+    @keyframes scrollPulse {
+      0%, 100% { transform: scaleX(1); opacity: 0.5; }
+      50% { transform: scaleX(1.4); opacity: 1; }
+    }
+    .scroll-hint {
+      position: absolute; bottom: 36px; left: 80px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.58rem; letter-spacing: 0.25em; text-transform: uppercase;
+      color: var(--gray);
+    }
+    .scroll-line { width: 32px; height: 1px; background: var(--gold); animation: scrollPulse 2s ease-in-out infinite; }
+ 
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 900px) {
+      nav { padding: 16px 20px; }
+      .nav-links { display: none; }
+      .slide-arrow.prev { left: 6px; }
+      .slide-arrow.next { right: 6px; }
+ 
+      .p1-hero, .p3-hero { grid-template-columns: 1fr; }
+      .p1-hero-right, .p3-hero-right { height: 45vw; }
+      .p1-hero-left { padding: 60px 24px 48px; }
+      .p1-hero-line { display: none; }
+ 
+      .gold-div { padding: 36px 24px; }
+ 
+      .section-purpose { grid-template-columns: 1fr; padding: 0 24px 60px; gap: 32px; }
+      .stats-row { grid-template-columns: 1fr; margin: 0 24px; margin-bottom: 60px; }
+      .stat-item { border-right: none; border-bottom: 1px solid rgba(201,168,76,0.12); padding: 24px 0; }
+      .stat-item:last-child { border-bottom: none; }
+      .section-standards { padding: 60px 24px; }
+      .std-header { grid-template-columns: 1fr; gap: 24px; }
+      .standards-grid { grid-template-columns: 1fr; }
+      .section-acceptance { grid-template-columns: 1fr; padding: 60px 24px; gap: 48px; }
+      .acceptance-badge { width: 90px; height: 90px; bottom: -12px; right: -6px; }
+ 
+      .p2-hero { padding: 0 24px 60px; }
+      .section-importance { grid-template-columns: 1fr; padding: 0 24px 60px; gap: 40px; }
+      .section-types { padding: 60px 24px; }
+      .types-grid { grid-template-columns: repeat(2,1fr); }
+      .section-tips { padding: 60px 24px; }
+      .tips-grid { grid-template-columns: 1fr; }
+      .banner-tip { margin: 0 24px 60px; }
+ 
+      .p3-hero-left { padding: 0 24px 60px; }
+      .section-essay { grid-template-columns: 1fr; padding: 0 24px 60px; gap: 32px; }
+      .section-social { padding: 60px 24px; }
+      .social-inner { grid-template-columns: 1fr; gap: 40px; }
+      .section-diversity { padding: 60px 24px; }
+      .diversity-grid { grid-template-columns: 1fr; }
+      .section-manifesto { padding: 60px 24px; }
+ 
+      .slide-footer { flex-direction: column; gap: 12px; text-align: center; padding: 28px 24px; }
+      .scroll-hint { left: 24px; }
+ 
+      .p5-card { padding: 40px 24px; }
+      .star { font-size: 2rem; }
+    }
+  </style>
+</head>
+<body>
+ 
+  <!-- NAV -->
+  <nav>
+    <div class="nav-logo" onclick="goToSlide(0)">Glow RRT</div>
+    <ul class="nav-links">
+      <li id="nav-0" class="active">
+        <button onclick="goToSlide(0)">Home</button>
+        <div class="nav-indicator"></div>
+      </li>
+      <li id="nav-1">
+        <button onclick="goToSlide(1)">Cuidados</button>
+        <div class="nav-indicator"></div>
+      </li>
+      <li id="nav-2">
+        <button onclick="goToSlide(2)">Autoestima</button>
+        <div class="nav-indicator"></div>
+      </li>
+      <li id="nav-3">
+        <button onclick="goToSlide(3)">Questionário</button>
+        <div class="nav-indicator"></div>
+      </li>
+      <li id="nav-4">
+        <button onclick="goToSlide(4)">Avaliação</button>
+        <div class="nav-indicator"></div>
+      </li>
+    </ul>
+  </nav>
+ 
+  <!-- ARROWS -->
+  <button class="slide-arrow prev" id="arrow-prev" onclick="prevSlide()" disabled>←</button>
+  <button class="slide-arrow next" id="arrow-next" onclick="nextSlide()">→</button>
+
+  <button class="autoplay-toggle" id="autoplay-toggle" type="button">
+    <span class="dot"></span>
+    <span id="autoplay-label">Pausar demonstração</span>
+  </button>
+ 
+  <!-- PAGE DOTS -->
+  <div class="page-counter">
+    <div class="page-dot active" onclick="goToSlide(0)"></div>
+    <div class="page-dot" onclick="goToSlide(1)"></div>
+    <div class="page-dot" onclick="goToSlide(2)"></div>
+    <div class="page-dot" onclick="goToSlide(3)"></div>
+    <div class="page-dot" onclick="goToSlide(4)"></div>
+  </div>
+ 
+  <!-- SLIDER -->
+  <div class="slider-viewport">
+    <div class="slider-track" id="slider-track">
+ 
+      <!-- ══════════════ SLIDE 1 — HOME ══════════════ -->
+      <div class="slide" id="slide-0">
+ 
+        <section class="p1-hero">
+          <div class="p1-hero-bg"></div>
+          <div class="p1-hero-line"></div>
+          <div class="p1-hero-left">
+            <p class="eyebrow">Conscientização · Cuidado · Autoestima</p>
+            <h1 class="p1-h1">Glow<br><em>RRT</em></h1>
+            <p class="hero-theme">Conscientização e Importância da Saúde da Pele:<br>Prevenção, Cuidados e Autoestima.</p>
+            <p class="hero-subtitle">Cada pele conta uma história.<br>A sua merece ser celebrada.</p>
+            <button class="btn-primary" onclick="nextSlide()">
+              <span>Saiba mais</span>
+              <span>→</span>
+            </button>
+          </div>
+          <div class="p1-hero-right">
+            <img class="hero-img"
+              src="https://images.unsplash.com/photo-1556228841-a3c527ebefe5?w=900&q=85&fit=crop"
+              alt="Cuidados com a pele" />
+            <div class="hero-img-overlay"></div>
+            <div class="hero-counter">01</div>
+          </div>
+          <div class="scroll-hint">
+            <span class="scroll-line"></span>
+            Role para explorar
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+ 
+        <section class="section-purpose" id="proposito">
+          <div>
+            <span class="section-label">Nosso propósito</span>
+          </div>
+          <div class="purpose-content">
+            <h2>Informar, inspirar e<br><em>empoderar</em> cada pele.</h2>
+            <p>O Glow RRT nasceu com um propósito simples e poderoso: mostrar que cuidar da pele vai muito além da estética. É um ato de amor-próprio, de saúde e de respeito ao próprio corpo.</p>
+            <p>Aqui você encontra informações sobre prevenção de doenças dermatológicas, rotinas de cuidado acessíveis e, acima de tudo, uma visão honesta sobre a beleza — sem filtros, sem ilusões.</p>
+            <p>Porque <strong style="color:var(--gold-pale);font-weight:400">não existe pele perfeita</strong> — existe pele saudável, cuidada e amada. E é exatamente isso que queremos que você descubra.</p>
+          </div>
+        </section>
+ 
+        <div class="stats-row">
+          <div class="stat-item">
+            <span class="stat-num">85%</span>
+            <span class="stat-label">das pessoas já sofreram com insegurança na pele</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-num">∞</span>
+            <span class="stat-label">tipos de pele únicos e igualmente belos</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-num">1</span>
+            <span class="stat-label">pele que você tem — e que merece todo cuidado</span>
+          </div>
+        </div>
+ 
+        <section class="section-standards" id="padroes">
+          <div class="std-header">
+            <h2>A sociedade cria padrões que<br><em>não existem.</em></h2>
+            <p>Filtros, edições e campanhas publicitárias constroem uma imagem de pele irreal — sem poros, sem manchas, sem imperfeições. Mas nenhuma pele é assim de verdade. Entender isso é o primeiro passo para se libertar.</p>
+          </div>
+          <div class="standards-grid">
+            <div class="standard-card">
+              <div class="card-num">01</div>
+              <div class="card-title">Filtros & ilusão digital</div>
+              <p class="card-text">Redes sociais transformam peles reais em superfícies plásticas. O que você vê não é a realidade — é uma construção. Comparar-se a isso é comparar-se ao impossível.</p>
+            </div>
+            <div class="standard-card">
+              <div class="card-num">02</div>
+              <div class="card-title">Publicidade & consumo</div>
+              <p class="card-text">A indústria da beleza lucra com inseguranças. Promessas de "pele perfeita" vendem produtos — não autoestima. Informação é a melhor defesa contra esses padrões.</p>
+            </div>
+            <div class="standard-card">
+              <div class="card-num">03</div>
+              <div class="card-title">Pressão social & saúde mental</div>
+              <p class="card-text">Acne, manchas e marcas são normais. A pressão para escondê-las afeta diretamente a saúde mental. Falar sobre isso é necessário e libertador.</p>
+            </div>
+          </div>
+        </section>
+ 
+        <section class="section-acceptance" id="aceitacao">
+          <div class="acceptance-img-wrap">
+            <img class="acceptance-img"
+              src="https://images.unsplash.com/photo-1614859324669-927e70f7a58a?w=700&q=85&fit=crop"
+              alt="Pessoa confiante cuidando da pele" />
+            <div class="acceptance-img-overlay"></div>
+            <div class="acceptance-badge">
+              <span class="badge-text">Sua pele<br>é única</span>
+              <span class="badge-sub">Celebre ela</span>
+            </div>
+          </div>
+          <div class="acceptance-content">
+            <span class="section-label">Aceitação & autoestima</span>
+            <h2>Abraçe sua pele.<br><em>Do jeito que ela é.</em></h2>
+            <div class="acceptance-quote">
+              <p>"A pele mais bonita é aquela que você cuida com amor e respeita com honestidade."</p>
+            </div>
+            <p>Manchas de sol, sardas, acne, estrias, poros dilatados — tudo isso faz parte de uma pele viva e real. Aceitar as próprias imperfeições não significa descuidar; significa partir de um lugar de respeito, não de vergonha.</p>
+            <button class="btn-primary" onclick="nextSlide()">
+              <span>Comece sua jornada</span>
+              <span>→</span>
+            </button>
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+        <footer class="slide-footer">
+          <div class="footer-logo">Glow RRT</div>
+          <p class="footer-copy">Saúde da Pele · Prevenção · Autoestima</p>
+        </footer>
+      </div>
+ 
+      <!-- ══════════════ SLIDE 2 — CUIDADOS ══════════════ -->
+      <div class="slide" id="slide-1">
+ 
+        <section class="p2-hero">
+          <div class="p2-hero-bg"></div>
+          <img class="p2-hero-img"
+            src="https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=1400&q=80&fit=crop"
+            alt="Cuidados com a pele" />
+          <div class="p2-hero-overlay"></div>
+          <div class="p2-hero-content">
+            <p class="eyebrow">Página 02 — Cuidados</p>
+            <h1>Cuidar da pele<br>é cuidar de <em>você.</em></h1>
+            <p>A pele é o maior órgão do corpo humano — e também o mais exposto. Conhecê-la, respeitá-la e tratá-la com atenção é um dos maiores gestos de autocuidado que existem.</p>
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+ 
+        <section class="section-importance">
+          <div class="importance-text">
+            <h2>Por que cuidar<br>da pele <em>importa?</em></h2>
+            <p>Muito além da estética, a saúde da pele é um reflexo direto do bem-estar do organismo. Ela nos protege de agentes externos, regula a temperatura corporal, percebe sensações e funciona como barreira imunológica. Descuidar dela pode resultar em problemas que vão do envelhecimento precoce a doenças dermatológicas sérias.</p>
+            <p>Adotar uma rotina simples e consistente de cuidados não é luxo — é saúde. E o ponto de partida é conhecer o próprio tipo de pele para fazer as escolhas certas.</p>
+          </div>
+          <div class="importance-img-wrap">
+            <img class="importance-img"
+              src="https://images.unsplash.com/photo-1556228578-0d85b1a4d571?w=700&q=80&fit=crop"
+              alt="Rotina de skincare" />
+            <div class="img-frame"></div>
+          </div>
+        </section>
+ 
+        <section class="section-types" id="tipos">
+          <div class="section-header">
+            <p class="section-header-label">Conheça sua pele</p>
+            <h2>Os <em>quatro tipos</em> de pele</h2>
+          </div>
+          <div class="types-grid">
+            <div class="type-card">
+              <span class="type-icon">💧</span>
+              <div class="type-name">Oleosa</div>
+              <p class="type-desc">Produz mais sebo do que o necessário, deixando a pele com aspecto brilhante, principalmente na zona T (testa, nariz e queixo).</p>
+              <div class="type-tags"><span class="tag">Brilho excessivo</span><span class="tag">Poros dilatados</span><span class="tag">Acne frequente</span></div>
+            </div>
+            <div class="type-card">
+              <span class="type-icon">🌵</span>
+              <div class="type-name">Seca</div>
+              <p class="type-desc">Produz pouco sebo, resultando em sensação de tensão, descamação e maior propensão a rugas e linhas finas.</p>
+              <div class="type-tags"><span class="tag">Descamação</span><span class="tag">Sensação de tensão</span><span class="tag">Opaca</span></div>
+            </div>
+            <div class="type-card">
+              <span class="type-icon">☯️</span>
+              <div class="type-name">Mista</div>
+              <p class="type-desc">Combina características das peles oleosa e seca — a zona T costuma ser mais oleosa, enquanto bochechas e contorno do rosto são mais secos.</p>
+              <div class="type-tags"><span class="tag">Zona T oleosa</span><span class="tag">Bochechas secas</span><span class="tag">Variável</span></div>
+            </div>
+            <div class="type-card">
+              <span class="type-icon">✨</span>
+              <div class="type-name">Normal</div>
+              <p class="type-desc">Pele equilibrada, com produção de sebo adequada, poros pouco visíveis, textura uniforme e raramente sensível.</p>
+              <div class="type-tags"><span class="tag">Equilibrada</span><span class="tag">Poros finos</span><span class="tag">Luminosa</span></div>
+            </div>
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+ 
+        <section class="section-tips" id="dicas">
+          <div class="section-header">
+            <p class="section-header-label">Rotina essencial</p>
+            <h2>Os três <em>pilares</em> do cuidado</h2>
+          </div>
+          <div class="tips-intro">
+            <p>Uma rotina eficaz não precisa ser complexa. Três etapas fundamentais já fazem toda a diferença na saúde e aparência da pele, independentemente do tipo.</p>
+          </div>
+          <div class="tips-grid">
+            <div class="tip-card">
+              <div class="tip-img-wrap">
+                <img class="tip-img" src="https://images.unsplash.com/photo-1556228720-195a672e8a03?w=600&q=80&fit=crop" alt="Limpeza de pele" />
+                <div class="tip-img-label">
+                  <p class="tip-step">Passo 01</p>
+                  <h3>Limpeza</h3>
+                </div>
+              </div>
+              <div class="tip-body">
+                <p>A limpeza remove impurezas, excesso de oleosidade, maquiagem e poluição acumulada ao longo do dia — evitando o entupimento dos poros e o surgimento de acne.</p>
+                <ul class="tip-list">
+                  <li>Lave o rosto de manhã e à noite</li>
+                  <li>Use água morna (nunca quente)</li>
+                  <li>Escolha um sabonete adequado ao seu tipo de pele</li>
+                  <li>Seque com movimentos suaves, sem esfregar</li>
+                  <li>Jamais durma com maquiagem</li>
+                </ul>
+              </div>
+            </div>
+            <div class="tip-card">
+              <div class="tip-img-wrap">
+                <img class="tip-img" src="https://images.unsplash.com/photo-1596755389378-c31d21fd1273?w=600&q=80&fit=crop" alt="Hidratação" />
+                <div class="tip-img-label">
+                  <p class="tip-step">Passo 02</p>
+                  <h3>Hidratação</h3>
+                </div>
+              </div>
+              <div class="tip-body">
+                <p>Mesmo peles oleosas precisam de hidratação. O hidratante reforça a barreira cutânea, previne o envelhecimento precoce e deixa a pele mais macia e saudável.</p>
+                <ul class="tip-list">
+                  <li>Aplique após a limpeza, enquanto a pele ainda está úmida</li>
+                  <li>Peles oleosas: texturas gel ou oil-free</li>
+                  <li>Peles secas: cremes mais ricos e nutritivos</li>
+                  <li>Beba bastante água — a hidratação começa por dentro</li>
+                  <li>Use hidratante corporal após o banho</li>
+                </ul>
+              </div>
+            </div>
+            <div class="tip-card">
+              <div class="tip-img-wrap">
+                <img class="tip-img" src="https://images.unsplash.com/photo-1607006344380-b6775a0824a7?w=600&q=80&fit=crop" alt="Protetor solar" />
+                <div class="tip-img-label">
+                  <p class="tip-step">Passo 03</p>
+                  <h3>Proteção Solar</h3>
+                </div>
+              </div>
+              <div class="tip-body">
+                <p>O protetor solar é o passo mais importante de qualquer rotina. Protege contra raios UVA e UVB, previne manchas, envelhecimento precoce e câncer de pele.</p>
+                <ul class="tip-list">
+                  <li>Use diariamente, mesmo em dias nublados</li>
+                  <li>FPS 30 no mínimo — idealmente 50+</li>
+                  <li>Aplique 20 minutos antes de se expor ao sol</li>
+                  <li>Reaplicar a cada 2h de exposição direta</li>
+                  <li>Não esqueça pescoço, orelhas e mãos</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+ 
+        <div class="banner-tip">
+          <div class="banner-tip-icon">☀️</div>
+          <div>
+            <h3>Lembre-se: consistência é tudo.</h3>
+            <p>Não existe produto milagroso. O segredo de uma pele saudável está na regularidade — pequenos cuidados diários que, ao longo do tempo, fazem uma diferença enorme. Comece devagar, conheça sua pele e construa uma rotina que caiba na sua vida.</p>
+          </div>
+        </div>
+ 
+        <div class="gold-div"><span>✦</span></div>
+        <footer class="slide-footer">
+          <div class="footer-logo">Glow RRT</div>
+          <p class="footer-copy">Saúde da Pele · Prevenção · Autoestima</p>
+        </footer>
+      </div>
+ 
+      <!-- ══════════════ SLIDE 3 — AUTOESTIMA ══════════════ -->
+      <div class="slide" id="slide-2">
+ 
+        <section class="p3-hero">
+          <div class="p3-hero-left">
+            <p class="eyebrow">Página 03 — Autoestima</p>
+            <h1>Beleza real<br>não tem<br><em>filtro.</em></h1>
+            <p class="p3-hero-intro">Vivemos rodeados de imagens que prometem uma perfeição que nunca existiu. Entender isso é o primeiro ato de libertação.</p>
+          </div>
+          <div class="p3-hero-right">
+            <img src="https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=900&q=85&fit=crop" alt="Mulher confiante e natural" />
+            <div class="p3-hero-overlay"></div>
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+ 
+        <section class="section-essay" id="padroes-auto">
+          <div class="essay-sidebar">
+            <span class="section-label">Reflexão</span>
+            <div class="sidebar-num">01</div>
+          </div>
+          <div class="essay-body">
+            <h2>A tirania dos<br><em>padrões irreais</em></h2>
+            <p>Desde cedo, somos apresentados a um ideal de beleza que não existe na natureza. Peles lisas sem um único poro, sem manchas, sem rugas, sem marcas de expressão — construídas em estúdios com iluminação profissional, editadas por softwares e filtradas ao ponto de se tornarem plásticas. E, ainda assim, essas imagens se tornam referência. Tornam-se <strong>a norma com a qual medimos a nós mesmos.</strong></p>
+            <p>A indústria da beleza, ao longo de décadas, lucrou imensamente ao fazer as pessoas acreditarem que precisavam ser consertadas. Produtos prometem "corrigir" manchas, "eliminar" poros, "apagar" marcas — como se a pele humana fosse um erro a ser corrigido, e não um órgão vivo que respira, envelhece e conta histórias.</p>
+            <div class="pull-quote">
+              <p>A pele perfeita não existe. Existe a pele que foi bem tratada, bem amada e bem aceita.</p>
+            </div>
+            <p>O problema não está em querer cuidar da aparência — cuidado e autoestima andam juntos. O problema está em <strong>confundir cuidado com correção</strong>, em acreditar que só é digno de amor quem se encaixa em um padrão estreito e artificialmente construído. Sardas, poros, acne, manchas de sol, celulite — são características de peles reais, humanas, vivas.</p>
+          </div>
+        </section>
+ 
+        <section class="section-social" id="redes">
+          <div class="social-inner">
+            <div class="social-img-col">
+              <img class="social-img"
+                src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=700&q=80&fit=crop"
+                alt="Redes sociais e pressão estética" />
+              <div class="social-img-deco"></div>
+              <div class="social-img-deco2"></div>
+            </div>
+            <div class="social-text-col">
+              <span class="section-label" style="margin-bottom: 20px; display: flex;">Redes sociais</span>
+              <h2>A tela que<br><em>distorce</em> o espelho</h2>
+              <p>As redes sociais amplificaram a pressão estética a níveis sem precedentes. Algoritmos favorecem conteúdos que performam beleza — e a beleza que performa é quase sempre a mesma: jovem, simétrica, sem imperfeições visíveis.</p>
+              <p>Filtros de realidade aumentada disponíveis em qualquer smartphone permitem que qualquer pessoa veja a si mesma com o nariz diferente, a pele "corrigida", os olhos maiores. O efeito colateral é profundo: <strong style="color:var(--gold-pale);font-weight:400">muitas pessoas passam a não se reconhecer sem o filtro.</strong></p>
+              <p>Estudos associam o uso intenso de redes sociais a maiores índices de insatisfação corporal, ansiedade e baixa autoestima — especialmente entre jovens.</p>
+              <div class="stat-pills">
+                <div class="pill"><strong>70%</strong> dos jovens se sentem inseguros após rolar o feed</div>
+                <div class="pill"><strong>1h+</strong> diária em redes aumenta insatisfação corporal</div>
+                <div class="pill"><strong>Filtros</strong> criam padrões que nem existem na realidade</div>
+              </div>
+            </div>
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+ 
+        <section class="section-diversity" id="diversidade">
+          <div class="diversity-header">
+            <p class="section-header-label">Representatividade</p>
+            <h2>Toda pele tem<br><em>sua própria beleza</em></h2>
+          </div>
+          <div class="diversity-grid">
+            <div class="div-img-wrap">
+              <img class="div-img" src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=500&q=80&fit=crop&crop=face" alt="Diversidade de pele" />
+              <div class="div-label">Pele com sardas</div>
+            </div>
+            <div class="div-img-wrap">
+              <img class="div-img" src="https://images.unsplash.com/photo-1607962837359-5e7e89f86776?w=500&q=80&fit=crop&crop=face" alt="Diversidade de pele" />
+              <div class="div-label">Pele negra</div>
+            </div>
+            <div class="div-img-wrap">
+              <img class="div-img" src="https://images.unsplash.com/photo-1594824476967-48c8b964273f?w=500&q=80&fit=crop&crop=face" alt="Diversidade de pele" />
+              <div class="div-label">Marcas naturais</div>
+            </div>
+          </div>
+        </section>
+ 
+        <section class="section-manifesto" id="aceitacao-auto">
+          <div class="manifesto-deco">❤</div>
+          <div class="manifesto-inner">
+            <p class="section-header-label">Manifesto</p>
+            <h2>Abraçar a própria pele<br>é um ato de <em>resistência.</em></h2>
+            <p>Em um mundo que lucra com sua insegurança, <strong>gostar de si mesmo é revolucionário.</strong> Aceitar a própria pele — com todas as suas marcas, poros, manchas e histórias — não é conformismo. É consciência. É a recusa de participar de um jogo em que as regras foram feitas para que você sempre perca.</p>
+            <p>Autoestima não é achar que você é perfeito. É entender que imperfeição não é sinônimo de inadequação. É reconhecer que o seu valor como pessoa não está na textura da sua pele ou na ausência de olheiras. É separar saúde de estética, cuidado de obsessão, beleza de conformidade.</p>
+            <p>Cuidar da pele a partir de um lugar de amor, e não de vergonha, muda tudo. Quando você limpa o rosto pela manhã pensando em saúde e não em "correção", quando passa protetor solar como um gesto de carinho e não de obrigação — a relação com o próprio corpo começa a se transformar.</p>
+            <div class="manifesto-words">
+              <span class="m-word">Autenticidade</span>
+              <span class="m-word">Resistência</span>
+              <span class="m-word">Cuidado</span>
+              <span class="m-word">Diversidade</span>
+              <span class="m-word">Aceitação</span>
+              <span class="m-word">Saúde</span>
+              <span class="m-word">Amor próprio</span>
+              <span class="m-word">Consciência</span>
+              <span class="m-word">Liberdade</span>
+            </div>
+            <p class="manifesto-closing">"A sua pele conta a história de quem você é —<br>e essa história merece ser contada sem filtros."</p>
+          </div>
+        </section>
+ 
+        <div class="gold-div"><span>✦</span></div>
+        <footer class="slide-footer">
+          <div class="footer-logo">Glow RRT</div>
+          <p class="footer-copy">Saúde da Pele · Prevenção · Autoestima</p>
+        </footer>
+      </div>
+ 
+      <!-- ══════════════ SLIDE 4 — QUESTIONÁRIO ══════════════ -->
+      <div class="slide" id="slide-3">
+        <div class="p4-main">
+ 
+          <div id="p4-quiz-form">
+            <div class="quiz-header">
+              <p class="eyebrow eyebrow-center" style="justify-content:center">Página 04</p>
+              <h1>Vamos conhecer<br><em>sua pele?</em></h1>
+              <p>Um questionário rápido de Sim ou Não para entender melhor sua pele e sua autoestima. Responda com honestidade — não existe certo ou errado!</p>
+            </div>
+ 
+            <div class="progress-bar-wrap">
+              <div class="progress-label">
+                <span>Progresso</span>
+                <span id="p4-progress-text">0 de 6</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill" id="p4-progress-fill"></div>
+              </div>
+            </div>
+ 
+            <p class="section-title">Sobre sua pele</p>
+ 
+            <div class="question" id="q1"><div class="question-text"><span class="q-num">01</span><span>Sua pele é oleosa ou você costuma ter espinhas?</span></div><div class="options"><button class="opt-btn" onclick="p4answer('q1','sim',this)"><span>Sim</span></button><button class="opt-btn" onclick="p4answer('q1','nao',this)"><span>Não</span></button></div></div>
+            <div class="question" id="q2"><div class="question-text"><span class="q-num">02</span><span>Sua pele costuma ser ressecada ou descamar?</span></div><div class="options"><button class="opt-btn" onclick="p4answer('q2','sim',this)"><span>Sim</span></button><button class="opt-btn" onclick="p4answer('q2','nao',this)"><span>Não</span></button></div></div>
+            <div class="question" id="q3"><div class="question-text"><span class="q-num">03</span><span>Você já teve alergia ou irritação ao usar produtos de pele?</span></div><div class="options"><button class="opt-btn" onclick="p4answer('q3','sim',this)"><span>Sim</span></button><button class="opt-btn" onclick="p4answer('q3','nao',this)"><span>Não</span></button></div></div>
+            <div class="question" id="q4"><div class="question-text"><span class="q-num">04</span><span>Você usa protetor solar todos os dias?</span></div><div class="options"><button class="opt-btn" onclick="p4answer('q4','sim',this)"><span>Sim</span></button><button class="opt-btn" onclick="p4answer('q4','nao',this)"><span>Não</span></button></div></div>
+ 
+            <div class="section-divider"></div>
+            <p class="section-title">Sobre autoestima</p>
+ 
+            <div class="question" id="q5"><div class="question-text"><span class="q-num">05</span><span>As redes sociais já afetaram sua autoestima em relação à sua pele?</span></div><div class="options"><button class="opt-btn" onclick="p4answer('q5','sim',this)"><span>Sim</span></button><button class="opt-btn" onclick="p4answer('q5','nao',this)"><span>Não</span></button></div></div>
+            <div class="question" id="q6"><div class="question-text"><span class="q-num">06</span><span>Você já sentiu que precisava ter uma pele "perfeita" para se sentir bem?</span></div><div class="options"><button class="opt-btn" onclick="p4answer('q6','sim',this)"><span>Sim</span></button><button class="opt-btn" onclick="p4answer('q6','nao',this)"><span>Não</span></button></div></div>
+ 
+            <div class="submit-wrap">
+              <button class="btn-submit" id="p4-submit-btn" onclick="p4showResults()" disabled>
+                <span>Enviar respostas</span>
+                <span>→</span>
+              </button>
+              <p class="submit-note" id="p4-submit-note">Responda todas as perguntas para continuar</p>
+            </div>
+          </div>
+ 
+          <div id="p4-results">
+            <div class="results-header">
+              <h2>Suas <em>dicas personalizadas</em></h2>
+              <p>Com base nas suas respostas, preparamos orientações especiais para você.</p>
+            </div>
+            <div class="result-cards" id="p4-result-cards"></div>
+            <div style="text-align:center">
+              <button class="back-btn" onclick="p4resetQuiz()">← Refazer questionário</button>
+            </div>
+          </div>
+ 
+        </div>
+        <footer class="slide-footer">
+          <div class="footer-logo">Glow RRT</div>
+          <p class="footer-copy">Saúde da Pele · Prevenção · Autoestima</p>
+        </footer>
+      </div>
+ 
+      <!-- ══════════════ SLIDE 5 — AVALIAÇÃO ══════════════ -->
+      <div class="slide" id="slide-4">
+        <div class="p5-main">
+          <div class="p5-card">
+ 
+            <div id="p5-rating-form">
+              <p class="eyebrow eyebrow-center">Página 05</p>
+              <h1>Sua opinião é<br><em>importante!</em></h1>
+              <p class="p5-subtitle">O que você achou do Glow RRT? Avalie nossa experiência e deixe um comentário se quiser.</p>
+ 
+              <div class="stars-section">
+                <p class="stars-label">Toque nas estrelas para avaliar</p>
+                <div class="stars" id="p5-stars">
+                  <span class="star" data-val="1" onclick="p5setRating(1)">★</span>
+                  <span class="star" data-val="2" onclick="p5setRating(2)">★</span>
+                  <span class="star" data-val="3" onclick="p5setRating(3)">★</span>
+                  <span class="star" data-val="4" onclick="p5setRating(4)">★</span>
+                  <span class="star" data-val="5" onclick="p5setRating(5)">★</span>
+                </div>
+                <p class="rating-desc" id="p5-rating-desc"></p>
+              </div>
+ 
+              <div class="comment-section">
+                <p class="comment-label">Deixe um comentário (opcional)</p>
+                <textarea id="p5-comment" placeholder="Escreva o que achou do site, o que gostou ou o que poderia melhorar..."></textarea>
+              </div>
+ 
+              <button class="btn-p5" id="p5-submit-btn" onclick="p5submitRating()" disabled>
+                <span>Enviar avaliação →</span>
+              </button>
+            </div>
+ 
+            <div id="p5-thankyou">
+              <span class="ty-icon">💛</span>
+              <div class="ty-stars" id="p5-ty-stars"></div>
+              <h2>Obrigada por visitar<br>o <em>Glow RRT!</em></h2>
+              <div class="ty-message">
+                <p>Cuidar da pele também é cuidar da sua autoestima.</p>
+                <p>Lembre-se: não existe pele perfeita, existe pele real 💖</p>
+              </div>
+              <p class="ty-tagline">Esperamos que o Glow RRT tenha te inspirado a se cuidar com mais amor e menos cobrança. Volte sempre!</p>
+              <div class="ty-nav">
+                <button onclick="goToSlide(0)">← Voltar ao início</button>
+                <button onclick="goToSlide(1)">Ver dicas de cuidados</button>
+                <button onclick="goToSlide(3)">Refazer questionário</button>
+              </div>
+            </div>
+ 
+          </div>
+        </div>
+        <footer class="slide-footer">
+          <div class="footer-logo">Glow RRT</div>
+          <p class="footer-copy">Saúde da Pele · Prevenção · Autoestima</p>
+        </footer>
+      </div>
+ 
+    </div><!-- /slider-track -->
+  </div><!-- /slider-viewport -->
+ 
+  <script>
+    // ─── SLIDER ───
+    let current = 0;
+    const total = 5;
+    const track = document.getElementById('slider-track');
+ 
+    function goToSlide(n) {
+      current = Math.max(0, Math.min(n, total - 1));
+      track.style.transform = `translateX(-${current * 100}vw)`;
+ 
+      // update nav
+      document.querySelectorAll('.nav-links li').forEach((li, i) => {
+        li.classList.toggle('active', i === current);
+        li.querySelector('button').classList.toggle('active', i === current);
+      });
+ 
+      // update dots
+      document.querySelectorAll('.page-dot').forEach((dot, i) => {
+        dot.classList.toggle('active', i === current);
+      });
+ 
+      // update arrows
+      document.getElementById('arrow-prev').disabled = current === 0;
+      document.getElementById('arrow-next').disabled = current === total - 1;
+ 
+      // reset scroll on current slide
+      document.getElementById('slide-' + current).scrollTop = 0;
+    }
+ 
+    function nextSlide() { goToSlide(current + 1); }
+    function prevSlide() { goToSlide(current - 1); }
+ 
+    // Keyboard navigation
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight') nextSlide();
+      if (e.key === 'ArrowLeft') prevSlide();
+    });
+ 
+    // Touch/swipe support
+    let touchStartX = 0;
+    document.querySelector('.slider-viewport').addEventListener('touchstart', e => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+    document.querySelector('.slider-viewport').addEventListener('touchend', e => {
+      const diff = touchStartX - e.changedTouches[0].screenX;
+      if (Math.abs(diff) > 50) {
+        if (diff > 0) nextSlide();
+        else prevSlide();
+      }
+    }, { passive: true });
+ 
+    // ─── DEMONSTRAÇÃO AUTOMÁTICA ───
+    (function () {
+      const SCROLL_SPEED = 170;  // pixels por segundo
+      const PAGE_PAUSE   = 1000; // pausa (ms) antes de ir para o proximo slide
+      const START_DELAY  = 800;  // espera inicial antes de comecar
+
+      const toggleBtn = document.getElementById('autoplay-toggle');
+      const label = document.getElementById('autoplay-label');
+
+      let active = false;
+      let rafId = null;
+      let waitTimer = null;
+      let lastTs = null;
+
+      function setLabel(text, paused) {
+        label.textContent = text;
+        toggleBtn.classList.toggle('paused', paused);
+      }
+
+      function step(ts) {
+        if (!active) return;
+        if (lastTs === null) lastTs = ts;
+        const dt = (ts - lastTs) / 1000;
+        lastTs = ts;
+
+        const slideEl = document.getElementById('slide-' + current);
+        slideEl.style.scrollBehavior = 'auto'; // evita conflito com o smooth-scroll do CSS
+        const maxScroll = slideEl.scrollHeight - slideEl.clientHeight;
+
+        if (slideEl.scrollTop < maxScroll - 1) {
+          slideEl.scrollTop += SCROLL_SPEED * dt;
+          rafId = requestAnimationFrame(step);
+        } else {
+          waitTimer = setTimeout(() => {
+            if (!active) return;
+            if (current < total - 1) nextSlide();
+            else goToSlide(0);
+            lastTs = null;
+            rafId = requestAnimationFrame(step);
+          }, PAGE_PAUSE);
+        }
+      }
+
+      function start() {
+        active = true;
+        lastTs = null;
+        setLabel('Pausar demonstracao', false);
+        rafId = requestAnimationFrame(step);
+      }
+
+      function stop() {
+        active = false;
+        if (rafId) cancelAnimationFrame(rafId);
+        if (waitTimer) clearTimeout(waitTimer);
+        const slideEl = document.getElementById('slide-' + current);
+        slideEl.style.scrollBehavior = ''; // devolve o smooth-scroll para navegação manual
+        setLabel('Ver demonstracao', true);
+      }
+
+      toggleBtn.addEventListener('click', () => {
+        if (active) stop();
+        else start();
+      });
+
+      ['wheel', 'touchstart', 'mousedown', 'keydown'].forEach(evt => {
+        document.addEventListener(evt, (e) => {
+          if (e.target.closest && e.target.closest('#autoplay-toggle')) return;
+          if (active) stop();
+        }, { passive: true });
+      });
+
+      setTimeout(start, START_DELAY);
+    })();
+
+    // ─── QUIZ (PAGE 4) ───
+    const p4answers = {};
+    const p4total = 6;
+ 
+    function p4answer(id, value, btn) {
+      p4answers[id] = value;
+      const parent = btn.closest('.options');
+      parent.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected-yes','selected-no'));
+      btn.classList.add(value === 'sim' ? 'selected-yes' : 'selected-no');
+      document.getElementById(id).classList.add('answered');
+      const count = Object.keys(p4answers).length;
+      const pct = (count / p4total) * 100;
+      document.getElementById('p4-progress-fill').style.width = pct + '%';
+      document.getElementById('p4-progress-text').textContent = count + ' de ' + p4total;
+      if (count === p4total) {
+        document.getElementById('p4-submit-btn').removeAttribute('disabled');
+        document.getElementById('p4-submit-note').textContent = 'Tudo pronto! Clique para ver seus resultados.';
+        document.getElementById('p4-submit-note').style.color = 'rgba(201,168,76,0.6)';
+      }
+    }
+ 
+    function p4showResults() {
+      const tips = [];
+      if (p4answers.q1 === 'sim') tips.push({ icon: '💧', title: 'Controle da Oleosidade & Acne', text: 'Peles oleosas precisam de limpeza gentil duas vezes ao dia com sabonete específico. Evite produtos com álcool que agridem a barreira da pele. Use hidratante oil-free e não esprema as espinhas — isso piora a inflamação e pode causar manchas permanentes.' });
+      if (p4answers.q2 === 'sim') tips.push({ icon: '🌿', title: 'Hidratação é prioridade', text: 'Pele ressecada precisa de hidratação reforçada. Aplique creme imediatamente após o banho, enquanto a pele ainda está úmida. Prefira produtos com ureia, glicerina ou ácido hialurônico. Beba bastante água ao longo do dia e evite banhos muito quentes.' });
+      if (p4answers.q3 === 'sim') tips.push({ icon: '🔬', title: 'Pele sensível: teste sempre', text: 'Antes de usar qualquer produto novo, faça o teste de toque: aplique uma pequena quantidade no pulso ou atrás da orelha e aguarde 24h. Prefira produtos com fórmula hipoalergênica e sem fragrância. Se a alergia for recorrente, consulte um dermatologista.' });
+      if (p4answers.q4 === 'nao') tips.push({ icon: '☀️', title: 'O protetor solar não pode faltar', text: 'O protetor solar é o passo mais importante de qualquer rotina — mesmo em dias nublados ou dentro de casa. Ele previne manchas, envelhecimento precoce e o câncer de pele. Use FPS 30 no mínimo, aplique 20 minutos antes de se expor e reaplique a cada 2 horas.' });
+      if (p4answers.q5 === 'sim') tips.push({ icon: '📱', title: 'Redes sociais & autoestima', text: 'O que você vê nas telas não é real. Filtros, iluminação e edição transformam peles humanas em superfícies plásticas. Seguir perfis que mostram diversidade e realidade ajuda a calibrar o olhar. Considere pausas nas redes e observe como você se sente sobre a própria aparência.' });
+      if (p4answers.q6 === 'sim') tips.push({ icon: '💛', title: 'Não existe pele perfeita', text: 'Poros, manchas, sardas, acne, marcas — são características de peles reais e vivas. A "pele perfeita" é uma construção comercial para vender produtos. Cuidar da pele é um gesto de saúde e carinho, não uma busca por perfeição. Sua pele conta sua história — e ela merece ser celebrada.' });
+ 
+      const container = document.getElementById('p4-result-cards');
+      container.innerHTML = '';
+      if (tips.length === 0) {
+        container.innerHTML = `<div class="result-all-good"><p>Parabéns! Suas respostas indicam que você já tem bons hábitos de cuidado com a pele e uma relação saudável com a autoestima. Continue assim — e lembre-se: sua pele real é linda! 💛</p></div>`;
+      } else {
+        tips.forEach(t => {
+          container.innerHTML += `<div class="result-card"><div class="result-icon">${t.icon}</div><div class="result-content"><h3>${t.title}</h3><p>${t.text}</p></div></div>`;
+        });
+      }
+      document.getElementById('p4-quiz-form').style.display = 'none';
+      document.getElementById('p4-results').style.display = 'block';
+      document.getElementById('slide-3').scrollTop = 0;
+    }
+ 
+    function p4resetQuiz() {
+      Object.keys(p4answers).forEach(k => delete p4answers[k]);
+      document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected-yes','selected-no'));
+      document.querySelectorAll('.question').forEach(q => q.classList.remove('answered'));
+      document.getElementById('p4-progress-fill').style.width = '0%';
+      document.getElementById('p4-progress-text').textContent = '0 de 6';
+      document.getElementById('p4-submit-btn').setAttribute('disabled','');
+      document.getElementById('p4-submit-note').textContent = 'Responda todas as perguntas para continuar';
+      document.getElementById('p4-submit-note').style.color = '';
+      document.getElementById('p4-quiz-form').style.display = 'block';
+      document.getElementById('p4-results').style.display = 'none';
+      document.getElementById('slide-3').scrollTop = 0;
+    }
+ 
+    // ─── RATING (PAGE 5) ───
+    let p5currentRating = 0;
+    const p5descs = ['', 'Poderia melhorar...', 'Está razoável', 'Gostei!', 'Muito bom!', 'Excelente! ✨'];
+    const p5stars = document.querySelectorAll('#p5-stars .star');
+ 
+    p5stars.forEach(star => {
+      star.addEventListener('mouseenter', () => {
+        const val = parseInt(star.dataset.val);
+        p5stars.forEach(s => s.classList.toggle('hovered', parseInt(s.dataset.val) <= val));
+      });
+      star.addEventListener('mouseleave', () => {
+        p5stars.forEach(s => s.classList.remove('hovered'));
+        p5updateStars();
+      });
+    });
+ 
+    function p5setRating(val) {
+      p5currentRating = val;
+      p5updateStars();
+      const desc = document.getElementById('p5-rating-desc');
+      desc.textContent = p5descs[val];
+      desc.classList.add('visible');
+      document.getElementById('p5-submit-btn').removeAttribute('disabled');
+    }
+ 
+    function p5updateStars() {
+      p5stars.forEach(s => s.classList.toggle('selected', parseInt(s.dataset.val) <= p5currentRating));
+    }
+ 
+    function p5submitRating() {
+      let starsHtml = '';
+      for (let i = 1; i <= 5; i++) {
+        starsHtml += `<span style="color:${i <= p5currentRating ? 'var(--gold)' : 'rgba(255,255,255,0.12)'}">★</span>`;
+      }
+      document.getElementById('p5-ty-stars').innerHTML = starsHtml;
+      document.getElementById('p5-rating-form').style.display = 'none';
+      document.getElementById('p5-thankyou').style.display = 'block';
+    }
+  </script>
+ 
+</body>
+</html>
